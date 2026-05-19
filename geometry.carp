@@ -102,7 +102,7 @@
                   near (min t0 t1)
                   far (max t0 t1)]
               (do
-                (when (> near tmin)
+                (when (> near (+ tmin Geometry.EPSILON)) ;; Only update axis if definitively further
                   (do (set! tmin near) (set! hit-axis 0) (set! hit-sign (if (< t0 t1) -1.0 1.0))))
                 (set! tmax (min tmax far)))))
           ;; Y Axis
@@ -115,7 +115,7 @@
                   near (min t0 t1)
                   far (max t0 t1)]
               (do
-                (when (> near tmin)
+                (when (> near (+ tmin Geometry.EPSILON))
                   (do (set! tmin near) (set! hit-axis 1) (set! hit-sign (if (< t0 t1) -1.0 1.0))))
                 (set! tmax (min tmax far)))))
           ;; Z Axis
@@ -128,7 +128,7 @@
                   near (min t0 t1)
                   far (max t0 t1)]
               (do
-                (when (> near tmin)
+                (when (> near (+ tmin Geometry.EPSILON))
                   (do (set! tmin near) (set! hit-axis 2) (set! hit-sign (if (< t0 t1) -1.0 1.0))))
                 (set! tmax (min tmax far)))))
 
@@ -137,7 +137,8 @@
                   p (Ray.at ray t)
                   n (cond (= hit-axis 0) (Vector3.init hit-sign 0.0 0.0)
                           (= hit-axis 1) (Vector3.init 0.0 hit-sign 0.0)
-                          (Vector3.init 0.0 0.0 hit-sign))]
+                          (= hit-axis 2) (Vector3.init 0.0 0.0 hit-sign)
+                          (Vector3.init 0.0 0.0 0.0))]
               (Maybe.Just (RayHit.init t p n)))
             (Maybe.Nothing)))))
   )
@@ -238,8 +239,11 @@
       (Vector3.dist (Segment.start s) (Segment.end s)))
 
     (defn direction [s]
-      (let [diff (Vector3.sub (Segment.end s) (Segment.start s))]
-        (Vector3.normalize &diff)))
+      (let [diff (Vector3.sub (Segment.end s) (Segment.start s))
+            dist (Vector3.mag &diff)]
+        (if (< dist Geometry.EPSILON)
+          (Vector3.init 0.0 0.0 1.0) ;; Stable default for zero-length
+          (Vector3.normalize &diff))))
 
     (defn intersect-sphere [s sphere]
       (let [ray (Ray.init @(Segment.start s) (direction s))
