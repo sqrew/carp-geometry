@@ -74,7 +74,10 @@
             (if (> t 0.0)
               (let [p (Ray.at ray t)
                     diff (Vector3.sub &p (Sphere.center sphere))
-                    n (Vector3.normalize &diff)]
+                    dist (Vector3.mag &diff)
+                    n (if (< dist Geometry.EPSILON)
+                        (Vector3.init 0.0 1.0 0.0)
+                        (Vector3.normalize &diff))]
                 (Maybe.Just (RayHit.init t p n)))
               (Maybe.Nothing))))))
 
@@ -200,10 +203,16 @@
                     norm (cond (= axis 0) (Vector3.init (if (< @(Vector3.x &diff) 0.0) -1.0 1.0) 0.0 0.0)
                                (= axis 1) (Vector3.init 0.0 (if (< @(Vector3.y &diff) 0.0) -1.0 1.0) 0.0)
                                (Vector3.init 0.0 0.0 (if (< @(Vector3.z &diff) 0.0) -1.0 1.0)))
-                    ;; Use center of overlap region as contact point
-                    cp (Vector3.init (+ (max @(Vector3.x amin) @(Vector3.x bmin)) (* ox 0.5))
-                                    (+ (max @(Vector3.y amin) @(Vector3.y bmin)) (* oy 0.5))
-                                    (+ (max @(Vector3.z amin) @(Vector3.z bmin)) (* oz 0.5)))]
+                    ;; Use midpoint of overlap interval
+                    x0 (max @(Vector3.x amin) @(Vector3.x bmin))
+                    x1 (min @(Vector3.x amax) @(Vector3.x bmax))
+                    y0 (max @(Vector3.y amin) @(Vector3.y bmin))
+                    y1 (min @(Vector3.y amax) @(Vector3.y bmax))
+                    z0 (max @(Vector3.z amin) @(Vector3.z bmin))
+                    z1 (min @(Vector3.z amax) @(Vector3.z bmax))
+                    cp (Vector3.init (* (+ x0 x1) 0.5)
+                                     (* (+ y0 y1) 0.5)
+                                     (* (+ z0 z1) 0.5))]
                 (Maybe.Just (Contact.init depth cp norm)))))
           (Maybe.Nothing))))
 
