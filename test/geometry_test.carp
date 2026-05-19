@@ -4,37 +4,58 @@
 (use Geometry)
 
 (deftest geometry-test
-  (let [process-test-state (ref (Test.State.init 0 0))
+  (let [state (ref (Test.State.init 0 0))
         
         ;; Sphere-Sphere
         s1 (Sphere.init (Vector3.init 0.0 0.0 0.0) 1.0)
         s2 (Sphere.init (Vector3.init 1.5 0.0 0.0) 1.0)
         s3 (Sphere.init (Vector3.init 2.5 0.0 0.0) 1.0)
         
-        t1 (assert-true process-test-state (Sphere.intersect? &s1 &s2) "Sphere-Sphere intersect")
-        t2 (assert-true &t1 (not (Sphere.intersect? &s1 &s3)) "Sphere-Sphere non-intersect")
+        t1 (assert-true state (Sphere.intersects-sphere? &s1 &s2) "Sphere-Sphere intersect")
+        t2 (assert-true &t1 (not (Sphere.intersects-sphere? &s1 &s3)) "Sphere-Sphere non-intersect")
 
         ;; AABB-AABB
         a1 (AABB.init (Vector3.init 0.0 0.0 0.0) (Vector3.init 1.0 1.0 1.0))
         a2 (AABB.init (Vector3.init 0.5 0.5 0.5) (Vector3.init 1.5 1.5 1.5))
         a3 (AABB.init (Vector3.init 1.5 1.5 1.5) (Vector3.init 2.5 2.5 2.5))
 
-        t3 (assert-true &t2 (AABB.intersect? &a1 &a2) "AABB-AABB intersect")
-        t4 (assert-true &t3 (not (AABB.intersect? &a1 &a3)) "AABB-AABB non-intersect")
+        t3 (assert-true &t2 (AABB.intersects-aabb? &a1 &a2) "AABB-AABB intersect")
+        t4 (assert-true &t3 (not (AABB.intersects-aabb? &a1 &a3)) "AABB-AABB non-intersect")
 
         ;; Ray-Sphere
-        r1 (Ray.init (Vector3.init -5.0 0.0 0.0) (Vector3.init 1.0 0.0 0.0))
-        r2 (Ray.init (Vector3.init -5.0 2.0 0.0) (Vector3.init 1.0 0.0 0.0))
+        r1 (create-ray &(Vector3.init -5.0 0.0 0.0) &(Vector3.init 1.0 0.0 0.0))
+        r2 (create-ray &(Vector3.init -5.0 2.0 0.0) &(Vector3.init 1.0 0.0 0.0))
 
-        t5 (assert-true &t4 (Ray.intersect-sphere? &r1 &s1) "Ray-Sphere intersect")
-        t6 (assert-true &t5 (not (Ray.intersect-sphere? &r2 &s1)) "Ray-Sphere non-intersect")
+        h1 (Ray.intersects-sphere? &r1 &s1)
+        t5 (assert-true &t4 (Maybe.just? &h1) "Ray-Sphere hit")
+        t6 (assert-true &t5 (let [hit (Maybe.unsafe-from h1)]
+                               (and (< (abs (- @(Hit.t &hit) 4.0)) Geometry.EPSILON)
+                                    (< (Vector3.dist (Hit.normal &hit) &(Vector3.init -1.0 0.0 0.0)) Geometry.EPSILON))) "Ray-Sphere distance and normal correct")
+        t7 (assert-true &t6 (let [res (Ray.intersects-sphere? &r2 &s1)] (Maybe.nothing? &res)) "Ray-Sphere miss")
 
         ;; Ray-AABB
-        t7 (assert-true &t6 (Ray.intersect-aabb? &r1 &a1) "Ray-AABB intersect")
-        t8 (assert-true &t7 (not (Ray.intersect-aabb? &r2 &a1)) "Ray-AABB non-intersect")
+        h2 (Ray.intersects-aabb? &r1 &a1)
+        t8 (assert-true &t7 (Maybe.just? &h2) "Ray-AABB hit")
+        t9 (assert-true &t8 (let [hit (Maybe.unsafe-from h2)]
+                               (and (< (abs (- @(Hit.t &hit) 5.0)) Geometry.EPSILON)
+                                    (< (Vector3.dist (Hit.normal &hit) &(Vector3.init -1.0 0.0 0.0)) Geometry.EPSILON))) "Ray-AABB distance and normal correct")
 
         ;; Sphere-AABB
-        t9 (assert-true &t8 (Sphere.intersect-aabb? &s1 &a1) "Sphere-AABB intersect")
-        t10 (assert-true &t9 (not (Sphere.intersect-aabb? &s3 &a1)) "Sphere-AABB non-intersect")
+        t10 (assert-true &t9 (Sphere.intersects-aabb? &s1 &a1) "Sphere-AABB intersect")
+        t11 (assert-true &t10 (not (Sphere.intersects-aabb? &s3 &a1)) "Sphere-AABB non-intersect")
+
+        ;; Plane Math
+        p1 (create-plane &(Vector3.init 0.0 0.0 0.0) &(Vector3.init 0.0 1.0 0.0))
+        p-dist (Plane.distance-to-point &p1 &(Vector3.init 0.0 5.0 0.0))
+        t12 (assert-true &t11 (< (abs (- p-dist 5.0)) Geometry.EPSILON) "Plane distance-to-point correct")
+
+        ;; Segment tests
+        seg1 (Segment.init (Vector3.init -5.0 0.0 0.0) (Vector3.init -3.0 0.0 0.0))
+        seg2 (Segment.init (Vector3.init -5.0 0.0 0.0) (Vector3.init 5.0 0.0 0.0))
+        
+        t13 (assert-true &t12 (let [res (Segment.intersects-sphere? &seg1 &s1)] (Maybe.nothing? &res)) "Segment short of sphere misses")
+        t14 (assert-true &t13 (let [res (Segment.intersects-sphere? &seg2 &s1)] (Maybe.just? &res)) "Segment through sphere hits")
+        t15 (assert-true &t14 (let [res (Segment.intersects-aabb? &seg1 &a1)] (Maybe.nothing? &res)) "Segment short of AABB misses")
+        t16 (assert-true &t15 (let [res (Segment.intersects-aabb? &seg2 &a1)] (Maybe.just? &res)) "Segment through AABB hits")
         ]
-    t10))
+    @&t16))
