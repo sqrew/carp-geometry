@@ -2,6 +2,8 @@
 (use Vector3)
 (use Double)
 
+;; --- Core Types ---
+
 (deftype Ray [
   origin (Vector3 Double)
   direction (Vector3 Double) ;; ALWAYS normalized
@@ -28,10 +30,12 @@
 ])
 
 (deftype Hit [
-  t Double
+  t Double       ;; Distance (Ray) or Penetration Depth (Overlaps)
   point (Vector3 Double)
   normal (Vector3 Double)
 ])
+
+;; --- Module Implementation ---
 
 (defmodule Geometry
   (def EPSILON 0.000001)
@@ -47,8 +51,8 @@
     (defn at [r t]
       (Vector3.add (Ray.origin r) &(Vector3.mul (Ray.direction r) t)))
 
-    (doc intersects-sphere? "Returns a Hit if the ray intersects the sphere.")
-    (defn intersects-sphere? [ray sphere]
+    (doc intersect-sphere "Returns a Hit if the ray intersects the sphere.")
+    (defn intersect-sphere [ray sphere]
       (let [oc (Vector3.sub (Ray.origin ray) (Sphere.center sphere))
             half-b (Vector3.dot &oc (Ray.direction ray))
             c (- (Vector3.mag-sq &oc) (* @(Sphere.radius sphere) @(Sphere.radius sphere)))
@@ -66,8 +70,8 @@
                 (Maybe.Just (Hit.init t p n)))
               (Maybe.Nothing))))))
 
-    (doc intersects-aabb? "Returns a Hit if the ray intersects the AABB. Uses Slab Method.")
-    (defn intersects-aabb? [ray aabb]
+    (doc intersect-aabb "Returns a Hit if the ray intersects the AABB. Robust normal extraction.")
+    (defn intersect-aabb [ray aabb]
       (let [origin (Ray.origin ray)
             dir (Ray.direction ray)
             amin (AABB.min aabb)
@@ -77,7 +81,7 @@
             hit-axis -1
             hit-sign 1.0]
         (do
-          ;; X
+          ;; X Axis
           (if (< (abs @(Vector3.x dir)) Geometry.EPSILON)
             (if (or (< @(Vector3.x origin) @(Vector3.x amin)) (> @(Vector3.x origin) @(Vector3.x amax)))
               (set! tmax -1.0) ())
@@ -90,7 +94,7 @@
                 (when (> near tmin)
                   (do (set! tmin near) (set! hit-axis 0) (set! hit-sign (if (< t0 t1) -1.0 1.0))))
                 (set! tmax (min tmax far)))))
-          ;; Y
+          ;; Y Axis
           (if (< (abs @(Vector3.y dir)) Geometry.EPSILON)
             (if (or (< @(Vector3.y origin) @(Vector3.y amin)) (> @(Vector3.y origin) @(Vector3.y amax)))
               (set! tmax -1.0) ())
@@ -103,7 +107,7 @@
                 (when (> near tmin)
                   (do (set! tmin near) (set! hit-axis 1) (set! hit-sign (if (< t0 t1) -1.0 1.0))))
                 (set! tmax (min tmax far)))))
-          ;; Z
+          ;; Z Axis
           (if (< (abs @(Vector3.z dir)) Geometry.EPSILON)
             (if (or (< @(Vector3.z origin) @(Vector3.z amin)) (> @(Vector3.z origin) @(Vector3.z amax)))
               (set! tmax -1.0) ())
@@ -122,27 +126,44 @@
                   p (Ray.at ray t)
                   n (cond (= hit-axis 0) (Vector3.init hit-sign 0.0 0.0)
                           (= hit-axis 1) (Vector3.init 0.0 hit-sign 0.0)
-                          (= hit-axis 2) (Vector3.init 0.0 0.0 hit-sign)
-                          (Vector3.init 0.0 0.0 0.0))]
+                          (Vector3.init 0.0 0.0 hit-sign))]
               (Maybe.Just (Hit.init t p n)))
             (Maybe.Nothing)))))
   )
 
   (defmodule Sphere
-    (defn intersects-sphere? [s1 s2]
-      (let [d2 (Vector3.mag-sq &(Vector3.sub (Sphere.center s1) (Sphere.center s2)))
+    (doc intersect-sphere "Sphere-Sphere overlap. t = penetration depth.")
+    (defn intersect-sphere [s1 s2]
+      (let [diff (Vector3.sub (Sphere.center s1) (Sphere.center s2))
+            d2 (Vector3.mag-sq &diff)
             sum (+ @(Sphere.radius s1) @(Sphere.radius s2))]
-        (<= d2 (* sum sum))))
+        (if (<= d2 (* sum sum))
+          (let [dist (sqrt d2)
+                norm (if (zero? dist) (Vector3.init 0.0 1.0 0.0) (Vector3.normalize &diff))
+                depth (- sum dist)
+                p (Vector3.sub (Sphere.center s1) &(Vector3.mul &norm @(Sphere.radius s1)))]
+            (Maybe.Just (Hit.init depth p norm)))
+          (Maybe.Nothing))))
 
-    (defn intersects-aabb? [sphere aabb]
+    (doc intersect-aabb "Sphere-AABB overlap. t = penetration depth.")
+    (defn intersect-aabb [sphere aabb]
       (let [center (Sphere.center sphere)
             amin (AABB.min aabb)
             amax (AABB.max aabb)
             closest (Vector3.init (clamp @(Vector3.x amin) @(Vector3.x amax) @(Vector3.x center))
                                  (clamp @(Vector3.y amin) @(Vector3.y amax) @(Vector3.y center))
                                  (clamp @(Vector3.z amin) @(Vector3.z amax) @(Vector3.z center)))
-            d2 (Vector3.mag-sq &(Vector3.sub &closest center))]
-        (<= d2 (* @(Sphere.radius sphere) @(Sphere.radius sphere)))))
+            diff (Vector3.sub &closest center)
+            d2 (Vector3.mag-sq &diff)
+            r @(Sphere.radius sphere)]
+        (if (<= d2 (* r r))
+          (let [dist (sqrt d2)
+                norm (if (zero? dist) (Vector3.init 0.0 1.0 0.0) 
+                         (let [n (Vector3.normalize &diff)] (Vector3.mul &n -1.0)))
+                depth (- r dist)
+                p closest]
+            (Maybe.Just (Hit.init depth p norm)))
+          (Maybe.Nothing))))
 
     (defn contains? [s p]
       (let [d2 (Vector3.mag-sq &(Vector3.sub (Sphere.center s) p))]
@@ -150,14 +171,25 @@
   )
 
   (defmodule AABB
-    (defn intersects-aabb? [a b]
-      (let [amin (AABB.min a)
-            amax (AABB.max a)
-            bmin (AABB.min b)
-            bmax (AABB.max b)]
-        (and (and (<= @(Vector3.x amin) @(Vector3.x bmax)) (>= @(Vector3.x amax) @(Vector3.x bmin)))
-             (and (<= @(Vector3.y amin) @(Vector3.y bmax)) (>= @(Vector3.y amax) @(Vector3.y bmin)))
-             (and (<= @(Vector3.z amin) @(Vector3.z bmax)) (>= @(Vector3.z amax) @(Vector3.z bmin))))))
+    (doc intersect-aabb "AABB-AABB overlap. t = penetration depth on the minimum axis.")
+    (defn intersect-aabb [a b]
+      (let [amin (AABB.min a) amax (AABB.max a)
+            bmin (AABB.min b) bmax (AABB.max b)
+            ox (- (min @(Vector3.x amax) @(Vector3.x bmax)) (max @(Vector3.x amin) @(Vector3.x bmin)))
+            oy (- (min @(Vector3.y amax) @(Vector3.y bmax)) (max @(Vector3.y amin) @(Vector3.y bmin)))
+            oz (- (min @(Vector3.z amax) @(Vector3.z bmax)) (max @(Vector3.z amin) @(Vector3.z bmin)))]
+        (if (and (and (> ox 0.0) (> oy 0.0)) (> oz 0.0))
+          ;; Find axis of minimum penetration
+          (let [depth ox axis 0]
+            (do
+              (when (< oy depth) (do (set! depth oy) (set! axis 1)))
+              (when (< oz depth) (do (set! depth oz) (set! axis 2)))
+              (let [diff (Vector3.sub (AABB.min a) (AABB.min b))
+                    norm (cond (= axis 0) (Vector3.init (if (< @(Vector3.x &diff) 0.0) -1.0 1.0) 0.0 0.0)
+                               (= axis 1) (Vector3.init 0.0 (if (< @(Vector3.y &diff) 0.0) -1.0 1.0) 0.0)
+                               (Vector3.init 0.0 0.0 (if (< @(Vector3.z &diff) 0.0) -1.0 1.0)))]
+                (Maybe.Just (Hit.init depth (Vector3.init 0.0 0.0 0.0) norm))))) ;; Point is complex for AABB, using zero for now
+          (Maybe.Nothing))))
 
     (defn contains? [a p]
       (let [amin (AABB.min a)
@@ -184,20 +216,20 @@
       (let [diff (Vector3.sub (Segment.end s) (Segment.start s))]
         (Vector3.normalize &diff)))
 
-    (defn intersects-sphere? [s sphere]
+    (defn intersect-sphere [s sphere]
       (let [ray (Ray.init @(Segment.start s) (direction s))
             len (length s)
-            hit-res (Ray.intersects-sphere? &ray sphere)]
+            hit-res (Ray.intersect-sphere &ray sphere)]
         (match hit-res
           (Maybe.Nothing) (Maybe.Nothing)
           (Maybe.Just hit) (if (<= @(Hit.t &hit) (+ len Geometry.EPSILON))
                              (Maybe.Just hit)
                              (Maybe.Nothing)))))
 
-    (defn intersects-aabb? [s aabb]
+    (defn intersect-aabb [s aabb]
       (let [ray (Ray.init @(Segment.start s) (direction s))
             len (length s)
-            hit-res (Ray.intersects-aabb? &ray aabb)]
+            hit-res (Ray.intersect-aabb &ray aabb)]
         (match hit-res
           (Maybe.Nothing) (Maybe.Nothing)
           (Maybe.Just hit) (if (<= @(Hit.t &hit) (+ len Geometry.EPSILON))
