@@ -43,6 +43,12 @@
   normal (Vector3 Double) ;; Separation direction (towards object A)
 ])
 
+(defmodule Contact
+  (doc reverse "returns a new Contact with the normal flipped and the same depth/point.")
+  (defn reverse [c]
+    (Contact.init @(Contact.depth c) @(Contact.point c) (Vector3.mul (Contact.normal c) -1.0)))
+)
+
 ;; --- Module Implementation ---
 
 (defmodule Geometry
