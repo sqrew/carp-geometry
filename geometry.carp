@@ -82,10 +82,17 @@
   position (Vector3 Double)
   rotation Quaternion
   scale Double
+  csg-nodes (Array CsgNode)
+])
+
+(deftype CsgNode [
+  shape (Box SDF)
+  op Int
 ])
 
 (defmodule SDF
   (sig add-crater! (Fn [(Ref SDF), LocalCrater] ()))
+  (sig add-csg-node! (Fn [(Ref SDF), CsgNode] ()))
   (sig apply-craters (Fn [(Ref SDF), (Ref (Vector3 Double)), Double] Double))
   (sig distance-local (Fn [(Ref SDF), (Ref (Vector3 Double))] Double))
   (sig distance-world (Fn [(Ref SDF), (Ref (Vector3 Double))] Double))
@@ -95,38 +102,50 @@
   (sig normal-at (Fn [(Ref SDF), (Ref (Vector3 Double))] (Vector3 Double)))
 
   (defn init-sphere [r pos rot]
-    (SDF.init (BaseShape.Ball r) [] pos rot 1.0))
+    (SDF.init (BaseShape.Ball r) [] pos rot 1.0 []))
 
   (defn init-plane [pl pos rot]
-    (SDF.init (BaseShape.Surface pl) [] pos rot 1.0))
+    (SDF.init (BaseShape.Surface pl) [] pos rot 1.0 []))
 
   (defn init-box [e pos rot]
-    (SDF.init (BaseShape.Box e) [] pos rot 1.0))
+    (SDF.init (BaseShape.Box e) [] pos rot 1.0 []))
 
   (defn init-cylinder [r h pos rot]
-    (SDF.init (BaseShape.Cylinder r h) [] pos rot 1.0))
+    (SDF.init (BaseShape.Cylinder r h) [] pos rot 1.0 []))
 
   (defn init-capsule [r h pos rot]
-    (SDF.init (BaseShape.Capsule r h) [] pos rot 1.0))
+    (SDF.init (BaseShape.Capsule r h) [] pos rot 1.0 []))
 
   (defn init-torus [R r pos rot]
-    (SDF.init (BaseShape.Torus R r) [] pos rot 1.0))
+    (SDF.init (BaseShape.Torus R r) [] pos rot 1.0 []))
 
   (defn init-octahedron [s pos rot]
-    (SDF.init (BaseShape.Octahedron s) [] pos rot 1.0))
+    (SDF.init (BaseShape.Octahedron s) [] pos rot 1.0 []))
 
   (defn add-crater! [sdf c]
     (Array.push-back! (SDF.craters sdf) c))
 
+  (defn add-csg-node! [sdf node]
+    (Array.push-back! (SDF.csg-nodes sdf) node))
+
   (defn apply-craters [sdf p base-d]
-    (let [d base-d
-          craters (SDF.craters sdf)]
+    (let [craters (SDF.craters sdf)
+          d base-d]
       (do
         (for [i 0 (Array.length craters)]
           (let [crater (Array.unsafe-nth craters i)
                 c-dist (- (Vector3.dist p (LocalCrater.pos crater)) @(LocalCrater.radius crater))]
             (set! d (max d (- 0.0 c-dist)))))
         d)))
+
+  (hidden evaluate-noise)
+  (defn evaluate-noise [p]
+    (let [x @(Vector3.x p)
+          y @(Vector3.y p)
+          z @(Vector3.z p)
+          n1 (* (sin (* x 3.5)) (* (cos (* y 3.5)) (sin (* z 3.5))))
+          n2 (* (sin (+ (* x 7.0) (* n1 2.0))) (* (cos (+ (* y 7.0) (* n1 2.0))) (sin (+ (* z 7.0) (* n1 2.0)))))]
+      (+ (* n1 0.12) (* n2 0.06))))
 
   (defn distance-local [sdf p]
     (let [scale @(SDF.scale sdf)
@@ -166,8 +185,35 @@
                            qy @(Vector3.y &local-p)]
                        (- (sqrt (+ (* qx qx) (* qy qy))) rad-min))
                    (BaseShape.Octahedron s)
-                     (* (- (+ (abs @(Vector3.x &local-p)) (+ (abs @(Vector3.y &local-p)) (abs @(Vector3.z &local-p)))) s) 0.57735027))]
-      (* (SDF.apply-craters sdf &local-p base-d) scale)))
+                     (* (- (+ (abs @(Vector3.x &local-p)) (+ (abs @(Vector3.y &local-p)) (abs @(Vector3.z &local-p)))) s) 0.57735027))
+          d (* (SDF.apply-craters sdf &local-p base-d) scale)
+          nodes (SDF.csg-nodes sdf)]
+      (do
+        (for [i 0 (Array.length nodes)]
+          (let [node (Array.unsafe-nth nodes i)
+                node-op @(CsgNode.op node)
+                child-sdf (Box.peek (CsgNode.shape node))
+                child-pos (SDF.position child-sdf)
+                diff (Vector3.sub p child-pos)
+                dist-sq (Vector3.mag-sq &diff)]
+            (if (= node-op 0)
+                (let [d-right (match @(SDF.base child-sdf)
+                                (BaseShape.Ball r) (- (sqrt dist-sq) r)
+                                _ (SDF.distance-world child-sdf p))]
+                  (set! d (min d d-right)))
+                (if (= node-op 1)
+                    (when (< dist-sq 9.0)
+                      (let [d-right (match @(SDF.base child-sdf)
+                                      (BaseShape.Ball r) (- (sqrt dist-sq) r)
+                                      _ (SDF.distance-world child-sdf p))]
+                        (set! d (max d (neg d-right)))))
+                    (if (= node-op 2)
+                        (let [d-right (match @(SDF.base child-sdf)
+                                        (BaseShape.Ball r) (- (sqrt dist-sq) r)
+                                        _ (SDF.distance-world child-sdf p))]
+                          (set! d (max d d-right)))
+                        ())))))
+        d)))
 
   (defn distance-world [sdf p-world]
     (match @(SDF.base sdf)
