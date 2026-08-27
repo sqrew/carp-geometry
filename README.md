@@ -155,3 +155,7 @@ This library prioritizes:
 - Simple collision systems
 - Ray-based weapon systems
 - Spatial queries and triggers
+
+## Examples
+
+See [examples.md](examples.md) for usage examples.
